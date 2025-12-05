@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>人脸识别数据降维可视化 (JS实现)</title>
+    <title>人脸识别数据降维可视化 (修正版)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.min.js"></script>
     <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
     <style>
@@ -11,15 +11,11 @@
         .container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         h1, h2 { text-align: center; color: #2c3e50; }
         h2 { border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 40px; }
-        
-        /* 图片网格样式 */
         .gallery { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin: 20px 0; }
         .face-card { text-align: center; font-size: 12px; }
-        canvas { border: 1px solid #ccc; image-rendering: pixelated; width: 60px; height: 60px; } /* 放大显示像素 */
-        
+        canvas { border: 1px solid #ccc; image-rendering: pixelated; width: 60px; height: 60px; } 
         .btn { display: block; width: 200px; margin: 20px auto; padding: 10px; background: #3498db; color: white; text-align: center; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
         .btn:hover { background: #2980b9; }
-        
         #loading { text-align: center; color: #7f8c8d; display: none; }
     </style>
 </head>
@@ -27,66 +23,79 @@
 
 <div class="container">
     <h1>人脸数据特征提取与降维 Demo</h1>
-    <p style="text-align: center;">模拟 10x10 像素的笑脸与哭脸数据，使用 PCA 降维并可视化。</p>
+    <p style="text-align: center;">模拟 10x10 像素的笑脸与哭脸数据 (已随机打乱)</p>
     
     <button class="btn" onclick="runAnalysis()">开始运行分析</button>
     <div id="loading">正在进行矩阵运算与特征提取...</div>
 
-    <h2>1. 原始人脸数据 (Raw Data)</h2>
-    <p>这里展示生成的带噪声样本 (像素维数: 10x10 = 100维)</p>
+    <h2>1. 原始人脸数据 (随机展示12张)</h2>
+    <p>现在你应该能同时看到笑脸和哭脸了。</p>
     <div id="raw-gallery" class="gallery"></div>
 
     <h2>2. 提取的特征脸 (Eigenfaces)</h2>
-    <p>这是 PCA 算法计算出的前 4 个主成分，代表了数据中变化最剧烈的方向。</p>
     <div id="eigen-gallery" class="gallery"></div>
 
     <h2>3. 降维后可视化 (PCA Projection)</h2>
-    <p>将 100 维图像压缩到 2 维平面。你可以看到“笑脸”和“哭脸”被自动分开了。</p>
     <div id="scatter-plot" style="width:100%;height:500px;"></div>
 </div>
 
 <script>
-    // --- 配置参数 ---
-    const IMG_SIZE = 10; // 图片大小 10x10
-    const SAMPLE_COUNT = 40; // 样本数量
-    const NUM_COMPONENTS = 2; // 降维目标维度
+    const IMG_SIZE = 10;
+    const SAMPLE_COUNT = 40; 
+    const NUM_COMPONENTS = 2;
 
-    // --- 1. 数据生成部分 (模拟人脸) ---
+    // --- 洗牌算法 (Fisher-Yates Shuffle) ---
+    // 用于同时打乱数据和标签，保证对应关系不变
+    function shuffleData(data, labels) {
+        let currentIndex = data.length, randomIndex;
+        while (currentIndex != 0) {
+            randomIndex = Math.floor(Math.random() * currentIndex);
+            currentIndex--;
+            [data[currentIndex], data[randomIndex]] = [data[randomIndex], data[currentIndex]];
+            [labels[currentIndex], labels[randomIndex]] = [labels[randomIndex], labels[currentIndex]];
+        }
+        return { data, labels };
+    }
+
+    // --- 1. 数据生成部分 ---
     function generateSyntheticFaces() {
-        const data = [];
-        const labels = [];
+        let data = [];
+        let labels = [];
         
         for (let i = 0; i < SAMPLE_COUNT; i++) {
-            // 扁平化数组 10x10 = 100个像素
             let face = new Array(IMG_SIZE * IMG_SIZE).fill(0);
-            
-            // 决定是笑脸(0) 还是 哭脸(1)
+            // 前一半是笑脸(0)，后一半是哭脸(1)
             const type = i < SAMPLE_COUNT / 2 ? 0 : 1; 
             
-            // 基础脸型 (简单的像素点索引)
+            // 眼睛 (左右眼)
             const eyes = [22, 27]; 
-            const mouthSmile = [62, 72, 73, 74, 75, 76, 77, 67]; // 简单的U型
-            const mouthFrown = [82, 72, 63, 64, 65, 66, 67, 77, 87]; // 简单的倒U型 (近似)
             
-            // 绘制特征
+            // 优化后的嘴型坐标 (10x10网格)
+            // 笑脸：嘴角在Row 6，底部在Row 7
+            const mouthSmile = [62, 67, 73, 74, 75, 76]; 
+            // 哭脸：嘴角在Row 7，顶部在Row 6 (倒U型)
+            const mouthFrown = [72, 77, 63, 64, 65, 66]; 
+            
             eyes.forEach(idx => face[idx] = 0.8);
+            
             if (type === 0) {
-                mouthSmile.forEach(idx => face[idx] = 0.6);
+                mouthSmile.forEach(idx => face[idx] = 0.7);
             } else {
-                // 简单的哭脸嘴型逻辑
-                 [72, 63, 64, 65, 66, 67, 77].forEach(idx => face[idx] = 0.6);
+                mouthFrown.forEach(idx => face[idx] = 0.7);
             }
 
-            // 添加随机噪声 (模拟真实数据的杂质)
+            // 添加随机噪声
             face = face.map(pixel => {
-                let noise = Math.random() * 0.4; // 噪声强度
+                let noise = Math.random() * 0.3; 
                 return Math.min(pixel + noise, 1.0);
             });
 
             data.push(face);
-            labels.push(type === 0 ? "笑脸 (Happy)" : "哭脸 (Sad)");
+            labels.push(type === 0 ? "笑脸" : "哭脸");
         }
-        return { data, labels };
+        
+        // 关键修复：在这里打乱数据！
+        return shuffleData(data, labels);
     }
 
     // --- 2. 绘图辅助函数 ---
@@ -97,23 +106,17 @@
         const ctx = canvas.getContext('2d');
         const imgData = ctx.createImageData(IMG_SIZE, IMG_SIZE);
 
-        // 填充像素数据
         for (let i = 0; i < pixelData.length; i++) {
-            // 归一化显示 (假设输入大致在0-1之间，或者包含负数的特征脸)
-            // 对于特征脸，我们需要把数值映射回 0-255 灰度
             let val = pixelData[i];
-            
-            // 简单的min-max归一化以便显示
-            if (val < -1) val = -1; if(val > 1) val = 1;
-            
-            // 如果是普通图片(0-1)，直接乘255。如果是特征脸(-0.5 ~ 0.5)，偏移后乘。
-            // 这里为了简单，统一处理：
+            // 简单的可视化映射
+            if (val < -0.5) val = -0.5; if(val > 1) val = 1;
+            // 负数(特征脸部分)映射为黑色，正数映射为白色
             let colorVal = Math.floor(Math.abs(val) * 255); 
             
-            imgData.data[i * 4 + 0] = colorVal; // R
-            imgData.data[i * 4 + 1] = colorVal; // G
-            imgData.data[i * 4 + 2] = colorVal; // B
-            imgData.data[i * 4 + 3] = 255;      // Alpha
+            imgData.data[i * 4 + 0] = colorVal; 
+            imgData.data[i * 4 + 1] = colorVal; 
+            imgData.data[i * 4 + 2] = colorVal; 
+            imgData.data[i * 4 + 3] = 255;      
         }
         ctx.putImageData(imgData, 0, 0);
 
@@ -126,59 +129,44 @@
         document.getElementById(containerId).appendChild(div);
     }
 
-    // --- 3. PCA 核心算法 (JS实现) ---
+    // --- 3. PCA 核心算法 ---
     function performPCA(X) {
-        // X 是 [n_samples, n_features] 的矩阵
-        
-        // 1. 中心化数据 (Mean Centering)
         const n_samples = X.length;
         const n_features = X[0].length;
         
-        // 计算每一列(特征)的均值
+        // 1. 中心化
         const mean = new Array(n_features).fill(0);
         for(let j=0; j<n_features; j++) {
             let sum = 0;
             for(let i=0; i<n_samples; i++) sum += X[i][j];
             mean[j] = sum / n_samples;
         }
-
-        // 减去均值
         const X_centered = X.map(row => row.map((val, j) => val - mean[j]));
 
-        // 2. 计算协方差矩阵 Cov = (X_T * X) / (n-1)
-        // 注意：Math.js 处理大矩阵可能会慢，这里数据量小没问题
+        // 2. 协方差矩阵
         const X_mat = math.matrix(X_centered);
         const X_T = math.transpose(X_mat);
         const Cov = math.multiply(X_T, X_mat);
         const Cov_div = math.divide(Cov, n_samples - 1);
 
-        // 3. 特征值分解 (Eigen Decomposition)
-        // eigs返回 {values: [], vectors: []}
+        // 3. 特征分解
         const ans = math.eigs(Cov_div);
         
-        // Math.js 返回的特征值通常是升序的，我们需要降序排列
-        // 组合特征值和特征向量
         let eigenPairs = [];
         const values = ans.values.toArray ? ans.values.toArray() : ans.values;
-        const vectors = ans.vectors.toArray ? ans.vectors.toArray() : ans.vectors; // 列向量是特征向量
+        const vectors = ans.vectors.toArray ? ans.vectors.toArray() : ans.vectors; 
 
         for(let i=0; i<values.length; i++) {
-            // 提取第i列作为向量
             let vec = [];
             for(let r=0; r<vectors.length; r++) vec.push(vectors[r][i]);
             eigenPairs.push({ val: values[i], vec: vec });
         }
 
-        // 排序 (大到小)
         eigenPairs.sort((a, b) => b.val - a.val);
 
-        // 4. 提取前 k 个主成分
+        // 4. 投影
         const topVectors = eigenPairs.slice(0, NUM_COMPONENTS).map(p => p.vec);
-        // 用于可视化的所有特征脸 (取前5个)
         const eigenFaces = eigenPairs.slice(0, 5).map(p => p.vec);
-
-        // 5. 投影数据 (Projection) Z = X_centered * W
-        // W 是 topVectors 的转置
         const W = math.transpose(topVectors); 
         const X_projected = math.multiply(X_mat, W).toArray();
 
@@ -192,32 +180,26 @@
         document.getElementById('eigen-gallery').innerHTML = '';
         document.getElementById('scatter-plot').innerHTML = '';
 
-        // 使用 setTimeout 让 UI 有机会渲染 Loading 文字
         setTimeout(() => {
-            // A. 生成数据
             const { data, labels } = generateSyntheticFaces();
             
-            // B. 展示原始数据 (展示前 10 张)
+            // 展示前 12 张 (现在是打乱后的，所以会有笑脸也有哭脸)
             for(let i=0; i<12; i++) {
                 drawFaceToCanvas(data[i], 'raw-gallery', labels[i]);
             }
 
-            // C. 运行 PCA
             try {
                 const pcaResult = performPCA(data);
                 
-                // D. 展示特征脸 (Eigenfaces)
-                // 特征脸本质上是特征向量reshape回图像
                 pcaResult.eigenFaces.forEach((face, idx) => {
-                    drawFaceToCanvas(face, 'eigen-gallery', `PC${idx+1}`);
+                    drawFaceToCanvas(face, 'eigen-gallery', `Eigen ${idx+1}`);
                 });
 
-                // E. 画散点图
                 plotScatter(pcaResult.projected, labels);
                 
             } catch (e) {
                 console.error(e);
-                alert("运算出错，请检查控制台。可能是矩阵奇异或 Math.js 版本问题。");
+                alert("运算出错，请检查控制台。");
             }
 
             document.getElementById('loading').style.display = 'none';
@@ -225,11 +207,10 @@
     }
 
     function plotScatter(projectedData, labels) {
-        // 分离两类数据以便画图 (Group 0: Happy, Group 1: Sad)
         let x0 = [], y0 = [], x1 = [], y1 = [];
         
         projectedData.forEach((point, i) => {
-            if (labels[i].includes("笑脸")) {
+            if (labels[i] === "笑脸") {
                 x0.push(point[0]);
                 y0.push(point[1]);
             } else {
@@ -239,31 +220,24 @@
         });
 
         var trace1 = {
-            x: x0, y: y0,
-            mode: 'markers',
-            type: 'scatter',
-            name: '笑脸 (Happy)',
-            marker: { size: 12, color: '#2ecc71' }
+            x: x0, y: y0, mode: 'markers', type: 'scatter',
+            name: '笑脸', marker: { size: 12, color: '#2ecc71' }
         };
 
         var trace2 = {
-            x: x1, y: y1,
-            mode: 'markers',
-            type: 'scatter',
-            name: '哭脸 (Sad)',
-            marker: { size: 12, color: '#e74c3c' }
+            x: x1, y: y1, mode: 'markers', type: 'scatter',
+            name: '哭脸', marker: { size: 12, color: '#e74c3c' }
         };
 
         var layout = {
             title: 'PCA 降维结果 (2D)',
-            xaxis: { title: '主成分 1 (Principal Component 1)' },
-            yaxis: { title: '主成分 2 (Principal Component 2)' },
+            xaxis: { title: '特征维度 1' },
+            yaxis: { title: '特征维度 2' },
             hovermode: 'closest'
         };
 
         Plotly.newPlot('scatter-plot', [trace1, trace2], layout);
     }
 </script>
-
 </body>
 </html>
